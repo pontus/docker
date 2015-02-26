@@ -277,7 +277,7 @@ is 64K.
 #### dm.blkdiscard
 Enables or disables the use of blkdiscard when removing devicemapper devices.
 This is enabled by default (only) if using loopback devices and is required to
-res-parsify the loopback file on image/container removal.
+resparsify the loopback file on image/container removal.
 
 Disabling this on loopback can lead to *much* faster container removal times,
 but will prevent the space used in `/var/lib/docker` directory from being returned to
@@ -296,7 +296,7 @@ for data and metadata:
 For specific client examples please see the man page for the specific Docker
 command. For example:
 
-    man docker run
+    man docker-run
 
 # HISTORY
 April 2014, Originally compiled by William Henry (whenry at redhat dot com) based on docker.com source material and internal work.

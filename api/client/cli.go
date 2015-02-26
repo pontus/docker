@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/docker/docker/pkg/homedir"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/docker/registry"
@@ -104,7 +105,7 @@ func (cli *DockerCli) Subcmd(name, signature, description string, exitOnError bo
 }
 
 func (cli *DockerCli) LoadConfigFile() (err error) {
-	cli.configFile, err = registry.LoadConfig(os.Getenv("HOME"))
+	cli.configFile, err = registry.LoadConfig(homedir.Get())
 	if err != nil {
 		fmt.Fprintf(cli.err, "WARNING: %s\n", err)
 	}
@@ -154,7 +155,6 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 
 	// The transport is created here for reuse during the client session
 	tr := &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
 		TLSClientConfig: tlsConfig,
 	}
 
@@ -167,6 +167,7 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 			return net.DialTimeout(proto, addr, timeout)
 		}
 	} else {
+		tr.Proxy = http.ProxyFromEnvironment
 		tr.Dial = (&net.Dialer{Timeout: timeout}).Dial
 	}
 

@@ -88,6 +88,19 @@ the same proportion of CPU cycles, but you can tell the kernel to give more
 shares of CPU time to one or more containers when you start them via **docker
 run**.
 
+The flag `-c` or `--cpu-shares` with value 0 indicates that the running
+container has access to all 1024 (default) CPU shares. However, this value
+can be modified to run a container with a different priority or different
+proportion of CPU cycles.
+
+E.g., If we start three {C0, C1, C2} containers with default values
+(`-c` OR `--cpu-shares` = 0) and one {C3} with (`-c` or `--cpu-shares`=512)
+then C0, C1, and C2 would have access to 100% CPU shares (1024) and C3 would
+only have access to 50% CPU shares (512). In the context of a time-sliced OS
+with time quantum set as 100 milliseconds, containers C0, C1, and C2 will run
+for full-time quantum, and container C3 will run for half-time quantum i.e 50
+milliseconds.
+
 **--cap-add**=[]
    Add Linux capabilities
 
@@ -186,16 +199,16 @@ which interface and port to use.
    Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
 
    Allows you to constrain the memory available to a container. If the host
-supports swap memory, then the -m memory setting can be larger than physical
-RAM. If a limit of 0 is specified, the container's memory is not limited. The
-actual limit may be rounded up to a multiple of the operating system's page
-size, if it is not already. The memory limit should be formatted as follows:
-`<number><optional unit>`, where unit = b, k, m or g.
+supports swap memory, then the **-m** memory setting can be larger than physical
+RAM. If a limit of 0 is specified (not using **-m**), the container's memory is
+not limited. The actual limit may be rounded up to a multiple of the operating
+system's page size (the value would be very large, that's millions of trillions).
 
 **--memory-swap**=""
-    Total memory usage (memory + swap)
+   Total memory limit (memory + swap)
 
-    Set '-1' to disable swap (format: <number><optional unit>, where unit = b, k, m or g)
+   Set `-1` to disable swap (format: <number><optional unit>, where unit = b, k, m or g).
+This value should always larger than **-m**, so you should alway use this with **-m**.
 
 **--mac-address**=""
    Container MAC address (e.g. 92:d0:c6:0a:29:33)

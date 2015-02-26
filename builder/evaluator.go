@@ -28,9 +28,11 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/builder/command"
 	"github.com/docker/docker/builder/parser"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/tarsum"
@@ -45,33 +47,33 @@ var (
 
 // Environment variable interpolation will happen on these statements only.
 var replaceEnvAllowed = map[string]struct{}{
-	"env":     {},
-	"add":     {},
-	"copy":    {},
-	"workdir": {},
-	"expose":  {},
-	"volume":  {},
-	"user":    {},
+	command.Env:     {},
+	command.Add:     {},
+	command.Copy:    {},
+	command.Workdir: {},
+	command.Expose:  {},
+	command.Volume:  {},
+	command.User:    {},
 }
 
 var evaluateTable map[string]func(*Builder, []string, map[string]bool, string) error
 
 func init() {
 	evaluateTable = map[string]func(*Builder, []string, map[string]bool, string) error{
-		"env":        env,
-		"maintainer": maintainer,
-		"add":        add,
-		"copy":       dispatchCopy, // copy() is a go builtin
-		"from":       from,
-		"onbuild":    onbuild,
-		"workdir":    workdir,
-		"run":        run,
-		"cmd":        cmd,
-		"entrypoint": entrypoint,
-		"expose":     expose,
-		"volume":     volume,
-		"user":       user,
-		"insert":     insert,
+		command.Env:        env,
+		command.Maintainer: maintainer,
+		command.Add:        add,
+		command.Copy:       dispatchCopy, // copy() is a go builtin
+		command.From:       from,
+		command.Onbuild:    onbuild,
+		command.Workdir:    workdir,
+		command.Run:        run,
+		command.Cmd:        cmd,
+		command.Entrypoint: entrypoint,
+		command.Expose:     expose,
+		command.Volume:     volume,
+		command.User:       user,
+		command.Insert:     insert,
 	}
 }
 
@@ -93,6 +95,11 @@ type Builder struct {
 	Remove      bool
 	ForceRemove bool
 	Pull        bool
+
+	// set this to true if we want the builder to not commit between steps.
+	// This is useful when we only want to use the evaluator table to generate
+	// the final configs of the Dockerfile but dont want the layers
+	disableCommit bool
 
 	AuthConfig     *registry.AuthConfig
 	AuthConfigFile *registry.ConfigFile
@@ -154,17 +161,17 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 			}
 			return "", err
 		}
-		fmt.Fprintf(b.OutStream, " ---> %s\n", utils.TruncateID(b.image))
+		fmt.Fprintf(b.OutStream, " ---> %s\n", common.TruncateID(b.image))
 		if b.Remove {
 			b.clearTmp()
 		}
 	}
 
 	if b.image == "" {
-		return "", fmt.Errorf("No image was generated. Is your Dockerfile empty?\n")
+		return "", fmt.Errorf("No image was generated. Is your Dockerfile empty?")
 	}
 
-	fmt.Fprintf(b.OutStream, "Successfully built %s\n", utils.TruncateID(b.image))
+	fmt.Fprintf(b.OutStream, "Successfully built %s\n", common.TruncateID(b.image))
 	return b.image, nil
 }
 
@@ -240,6 +247,9 @@ func (b *Builder) dispatch(stepN int, ast *parser.Node) error {
 	msg := fmt.Sprintf("Step %d : %s", stepN, strings.ToUpper(cmd))
 
 	if cmd == "onbuild" {
+		if ast.Next == nil {
+			return fmt.Errorf("ONBUILD requires at least one argument")
+		}
 		ast = ast.Next.Children[0]
 		strs = append(strs, ast.Value)
 		msg += " " + ast.Value

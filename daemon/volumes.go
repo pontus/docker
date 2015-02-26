@@ -89,9 +89,10 @@ func (m *Mount) initialize() error {
 
 		// Make sure we remove these old volumes we don't actually want now.
 		// Ignore any errors here since this is just cleanup, maybe someone volumes-from'd this volume
-		v := m.container.daemon.volumes.Get(hostPath)
-		v.RemoveContainer(m.container.ID)
-		m.container.daemon.volumes.Delete(v.Path)
+		if v := m.container.daemon.volumes.Get(hostPath); v != nil {
+			v.RemoveContainer(m.container.ID)
+			m.container.daemon.volumes.Delete(v.Path)
+		}
 	}
 
 	// This is the full path to container fs + mntToPath
@@ -158,6 +159,10 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		if err != nil {
 			return nil, err
 		}
+		// Check if a bind mount has already been specified for the same container path
+		if m, exists := mounts[mountToPath]; exists {
+			return nil, fmt.Errorf("Duplicate volume %q: %q already in use, mounted from %q", path, mountToPath, m.volume.Path)
+		}
 		// Check if a volume already exists for this and use it
 		vol, err := container.daemon.volumes.FindOrCreateVolume(path, writable)
 		if err != nil {
@@ -182,6 +187,12 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		// Check if this has already been created
 		if _, exists := container.Volumes[path]; exists {
 			continue
+		}
+
+		if stat, err := os.Stat(filepath.Join(container.basefs, path)); err == nil {
+			if !stat.IsDir() {
+				return nil, fmt.Errorf("file exists at %s, can't create volume there")
+			}
 		}
 
 		vol, err := container.daemon.volumes.FindOrCreateVolume("", true)
@@ -266,9 +277,9 @@ func (container *Container) applyVolumesFrom() error {
 			continue
 		}
 
-		c := container.daemon.Get(id)
-		if c == nil {
-			return fmt.Errorf("container %s not found, impossible to mount its volumes", id)
+		c, err := container.daemon.Get(id)
+		if err != nil {
+			return fmt.Errorf("Could not apply volumes of non-existent container %q.", id)
 		}
 
 		var (
@@ -306,8 +317,23 @@ func validMountMode(mode string) bool {
 }
 
 func (container *Container) setupMounts() error {
-	mounts := []execdriver.Mount{
-		{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true},
+	mounts := []execdriver.Mount{}
+
+	// Mount user specified volumes
+	// Note, these are not private because you may want propagation of (un)mounts from host
+	// volumes. For instance if you use -v /usr:/usr and the host later mounts /usr/share you
+	// want this new mount in the container
+	// These mounts must be ordered based on the length of the path that it is being mounted to (lexicographic)
+	for _, path := range container.sortedVolumeMounts() {
+		mounts = append(mounts, execdriver.Mount{
+			Source:      container.Volumes[path],
+			Destination: path,
+			Writable:    container.VolumesRW[path],
+		})
+	}
+
+	if container.ResolvConfPath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true})
 	}
 
 	if container.HostnamePath != "" {
@@ -322,19 +348,6 @@ func (container *Container) setupMounts() error {
 		if err := label.SetFileLabel(m.Source, container.MountLabel); err != nil {
 			return err
 		}
-	}
-
-	// Mount user specified volumes
-	// Note, these are not private because you may want propagation of (un)mounts from host
-	// volumes. For instance if you use -v /usr:/usr and the host later mounts /usr/share you
-	// want this new mount in the container
-	// These mounts must be ordered based on the length of the path that it is being mounted to (lexicographic)
-	for _, path := range container.sortedVolumeMounts() {
-		mounts = append(mounts, execdriver.Mount{
-			Source:      container.Volumes[path],
-			Destination: path,
-			Writable:    container.VolumesRW[path],
-		})
 	}
 
 	container.command.Mounts = mounts

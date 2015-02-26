@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/nat"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/networkfs/etchosts"
 	"github.com/docker/docker/pkg/networkfs/resolvconf"
@@ -70,6 +71,7 @@ type Container struct {
 	ResolvConfPath string
 	HostnamePath   string
 	HostsPath      string
+	LogPath        string
 	Name           string
 	Driver         string
 	ExecDriver     string
@@ -457,11 +459,18 @@ func (container *Container) buildHostsFiles(IP string) error {
 
 	for linkAlias, child := range children {
 		_, alias := path.Split(linkAlias)
-		extraContent = append(extraContent, etchosts.Record{Hosts: alias, IP: child.NetworkSettings.IPAddress})
+		// allow access to the linked container via the alias, real name, and container hostname
+		aliasList := alias + " " + child.Config.Hostname
+		// only add the name if alias isn't equal to the name
+		if alias != child.Name[1:] {
+			aliasList = aliasList + " " + child.Name[1:]
+		}
+		extraContent = append(extraContent, etchosts.Record{Hosts: aliasList, IP: child.NetworkSettings.IPAddress})
 	}
 
 	for _, extraHost := range container.hostConfig.ExtraHosts {
-		parts := strings.Split(extraHost, ":")
+		// allow IPv6 addresses in extra hosts; only split on first ":"
+		parts := strings.SplitN(extraHost, ":", 2)
 		extraContent = append(extraContent, etchosts.Record{Hosts: parts[0], IP: parts[1]})
 	}
 
@@ -696,7 +705,7 @@ func (container *Container) Kill() error {
 	if _, err := container.WaitStop(10 * time.Second); err != nil {
 		// Ensure that we don't kill ourselves
 		if pid := container.GetPid(); pid != 0 {
-			log.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", utils.TruncateID(container.ID))
+			log.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", common.TruncateID(container.ID))
 			if err := syscall.Kill(pid, 9); err != nil {
 				if err != syscall.ESRCH {
 					return err
@@ -1126,7 +1135,12 @@ func (container *Container) updateParentsHosts() error {
 		if ref.ParentID == "0" {
 			continue
 		}
-		c := container.daemon.Get(ref.ParentID)
+
+		c, err := container.daemon.Get(ref.ParentID)
+		if err != nil {
+			log.Error(err)
+		}
+
 		if c != nil && !container.daemon.config.DisableNetwork && container.hostConfig.NetworkMode.IsPrivate() {
 			log.Debugf("Update /etc/hosts of %s for alias %s with ip %s", c.ID, ref.Name, container.NetworkSettings.IPAddress)
 			if err := etchosts.Update(c.HostsPath, container.NetworkSettings.IPAddress, ref.Name); err != nil {
@@ -1316,16 +1330,17 @@ func (container *Container) setupWorkingDirectory() error {
 
 func (container *Container) startLoggingToDisk() error {
 	// Setup logging of stdout and stderr to disk
-	pth, err := container.logPath("json")
+	logPath, err := container.logPath("json")
 	if err != nil {
 		return err
 	}
+	container.LogPath = logPath
 
-	if err := container.daemon.LogToDisk(container.stdout, pth, "stdout"); err != nil {
+	if err := container.daemon.LogToDisk(container.stdout, container.LogPath, "stdout"); err != nil {
 		return err
 	}
 
-	if err := container.daemon.LogToDisk(container.stderr, pth, "stderr"); err != nil {
+	if err := container.daemon.LogToDisk(container.stderr, container.LogPath, "stderr"); err != nil {
 		return err
 	}
 
@@ -1395,9 +1410,9 @@ func (container *Container) GetMountLabel() string {
 
 func (container *Container) getIpcContainer() (*Container, error) {
 	containerID := container.hostConfig.IpcMode.Container()
-	c := container.daemon.Get(containerID)
-	if c == nil {
-		return nil, fmt.Errorf("no such container to join IPC: %s", containerID)
+	c, err := container.daemon.Get(containerID)
+	if err != nil {
+		return nil, err
 	}
 	if !c.IsRunning() {
 		return nil, fmt.Errorf("cannot join IPC of a non running container: %s", containerID)
@@ -1412,9 +1427,9 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("no container specified to join network")
 		}
-		nc := container.daemon.Get(parts[1])
-		if nc == nil {
-			return nil, fmt.Errorf("no such container to join network: %s", parts[1])
+		nc, err := container.daemon.Get(parts[1])
+		if err != nil {
+			return nil, err
 		}
 		if !nc.IsRunning() {
 			return nil, fmt.Errorf("cannot join network of a non running container: %s", parts[1])

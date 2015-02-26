@@ -518,6 +518,7 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 	job.Setenv("tag", r.Form.Get("tag"))
 	job.Setenv("author", r.Form.Get("author"))
 	job.Setenv("comment", r.Form.Get("comment"))
+	job.SetenvList("changes", r.Form["changes"])
 	job.SetenvSubEnv("config", &config)
 
 	job.Stdout.Add(stdoutBuffer)
@@ -570,6 +571,7 @@ func postImagesCreate(eng *engine.Engine, version version.Version, w http.Respon
 		}
 		job = eng.Job("import", r.Form.Get("fromSrc"), repo, tag)
 		job.Stdin.Add(r.Body)
+		job.SetenvList("changes", r.Form["changes"])
 	}
 
 	if version.GreaterThan("1.0") {
@@ -1114,7 +1116,7 @@ func postContainersCopy(eng *engine.Engine, version version.Version, w http.Resp
 	w.Header().Set("Content-Type", "application/x-tar")
 	if err := job.Run(); err != nil {
 		log.Errorf("%s", err.Error())
-		if strings.Contains(strings.ToLower(err.Error()), "no such container") {
+		if strings.Contains(strings.ToLower(err.Error()), "no such id") {
 			w.WriteHeader(http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "no such file or directory") {
 			return fmt.Errorf("Could not find the file %s in container %s", origResource, vars["name"])
@@ -1554,8 +1556,8 @@ func allocateDaemonPort(addr string) error {
 }
 
 func setupTcpHttp(addr string, job *engine.Job) (*HttpServer, error) {
-	if !strings.HasPrefix(addr, "127.0.0.1") && !job.GetenvBool("TlsVerify") {
-		log.Infof("/!\\ DON'T BIND ON ANOTHER IP ADDRESS THAN 127.0.0.1 IF YOU DON'T KNOW WHAT YOU'RE DOING /!\\")
+	if !job.GetenvBool("TlsVerify") {
+		log.Infof("/!\\ DON'T BIND ON ANY IP ADDRESS WITHOUT setting -tlsverify IF YOU DON'T KNOW WHAT YOU'RE DOING /!\\")
 	}
 
 	r := createRouter(job.Eng, job.GetenvBool("Logging"), job.GetenvBool("EnableCors"), job.Getenv("Version"))

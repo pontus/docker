@@ -25,6 +25,7 @@ import (
 	imagepkg "github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/chrootarchive"
+	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/symlink"
@@ -59,6 +60,9 @@ func (b *Builder) readContext(context io.Reader) error {
 }
 
 func (b *Builder) commit(id string, autoCmd []string, comment string) error {
+	if b.disableCommit {
+		return nil
+	}
 	if b.image == "" && !b.noBaseImage {
 		return fmt.Errorf("Please provide a source image with `from` prior to commit")
 	}
@@ -87,9 +91,9 @@ func (b *Builder) commit(id string, autoCmd []string, comment string) error {
 		}
 		defer container.Unmount()
 	}
-	container := b.Daemon.Get(id)
-	if container == nil {
-		return fmt.Errorf("An error occured while creating the container")
+	container, err := b.Daemon.Get(id)
+	if err != nil {
+		return err
 	}
 
 	// Note: Actually copy the struct
@@ -531,7 +535,7 @@ func (b *Builder) create() (*daemon.Container, error) {
 	}
 
 	b.TmpContainers[c.ID] = struct{}{}
-	fmt.Fprintf(b.OutStream, " ---> Running in %s\n", utils.TruncateID(c.ID))
+	fmt.Fprintf(b.OutStream, " ---> Running in %s\n", common.TruncateID(c.ID))
 
 	if len(config.Cmd) > 0 {
 		// override the entry point that may have been picked up from the base image
@@ -545,19 +549,19 @@ func (b *Builder) create() (*daemon.Container, error) {
 }
 
 func (b *Builder) run(c *daemon.Container) error {
+	var errCh chan error
+	if b.Verbose {
+		errCh = b.Daemon.Attach(&c.StreamConfig, c.Config.OpenStdin, c.Config.StdinOnce, c.Config.Tty, nil, b.OutStream, b.ErrStream)
+	}
+
 	//start the container
 	if err := c.Start(); err != nil {
 		return err
 	}
 
 	if b.Verbose {
-		logsJob := b.Engine.Job("logs", c.ID)
-		logsJob.Setenv("follow", "1")
-		logsJob.Setenv("stdout", "1")
-		logsJob.Setenv("stderr", "1")
-		logsJob.Stdout.Add(b.OutStream)
-		logsJob.Stderr.Set(b.ErrStream)
-		if err := logsJob.Run(); err != nil {
+		// Block on reading output from container, stop on err or chan closed
+		if err := <-errCh; err != nil {
 			return err
 		}
 	}
@@ -710,13 +714,17 @@ func fixPermissions(source, destination string, uid, gid int, destExisted bool) 
 
 func (b *Builder) clearTmp() {
 	for c := range b.TmpContainers {
-		tmp := b.Daemon.Get(c)
-		if err := b.Daemon.Destroy(tmp); err != nil {
-			fmt.Fprintf(b.OutStream, "Error removing intermediate container %s: %s\n", utils.TruncateID(c), err.Error())
+		tmp, err := b.Daemon.Get(c)
+		if err != nil {
+			fmt.Fprint(b.OutStream, err.Error())
+		}
+
+		if err := b.Daemon.Rm(tmp); err != nil {
+			fmt.Fprintf(b.OutStream, "Error removing intermediate container %s: %s\n", common.TruncateID(c), err.Error())
 			return
 		}
 		b.Daemon.DeleteVolumes(tmp.VolumePaths())
 		delete(b.TmpContainers, c)
-		fmt.Fprintf(b.OutStream, "Removing intermediate container %s\n", utils.TruncateID(c))
+		fmt.Fprintf(b.OutStream, "Removing intermediate container %s\n", common.TruncateID(c))
 	}
 }

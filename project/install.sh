@@ -151,19 +151,19 @@ case "$lsb_dist" in
 
 		if [ ! -e /usr/lib/apt/methods/https ]; then
 			apt_get_update
-			( set -x; $sh_c 'sleep 3; apt-get install -y -q apt-transport-https' )
+			( set -x; $sh_c 'sleep 3; apt-get install -y -q apt-transport-https ca-certificates' )
 		fi
 		if [ -z "$curl" ]; then
 			apt_get_update
-			( set -x; $sh_c 'sleep 3; apt-get install -y -q curl' )
+			( set -x; $sh_c 'sleep 3; apt-get install -y -q curl ca-certificates' )
 			curl='curl -sSL'
 		fi
 		(
 			set -x
 			if [ "https://get.docker.com/" = "$url" ]; then
-				$sh_c "apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 36A1D7869245C8950F966E92D8576A8BA88D21E9"
+				$sh_c "apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 36A1D7869245C8950F966E92D8576A8BA88D21E9"
 			elif [ "https://test.docker.com/" = "$url" ]; then
-				$sh_c "apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 740B314AE3941731B942C66ADF4FD13717AAD7D6"
+				$sh_c "apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 740B314AE3941731B942C66ADF4FD13717AAD7D6"
 			else
 				$sh_c "$curl ${url}gpg | apt-key add -"
 			fi
